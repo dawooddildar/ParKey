@@ -1,0 +1,196 @@
+
+-- =========================================
+-- PARKEY DATABASE SETUP
+-- =========================================
+
+-- 1. PARKING LOCATIONS
+CREATE TABLE public.lots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT UNIQUE NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    display_order INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+
+-- 2. PARKING SLOTS
+CREATE TABLE public.parking_slots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    lot_id UUID NOT NULL
+        REFERENCES public.lots(id) ON DELETE RESTRICT,
+
+    slot_code TEXT NOT NULL,
+
+    status TEXT NOT NULL DEFAULT 'free'
+        CHECK (status IN ('free', 'held', 'parked')),
+
+    current_driver_id UUID
+        REFERENCES auth.users(id),
+
+    reservation_type TEXT
+        CHECK (reservation_type IN ('immediate', 'advance')),
+
+    hold_expires_at TIMESTAMPTZ,
+
+    parked_since TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+
+    UNIQUE (lot_id, slot_code),
+
+    -- Keep slot ownership and timestamps consistent
+    CHECK (
+        (status = 'free'
+            AND current_driver_id IS NULL
+            AND reservation_type IS NULL
+            AND hold_expires_at IS NULL
+            AND parked_since IS NULL)
+
+        OR
+
+        (status = 'held'
+            AND current_driver_id IS NOT NULL
+            AND reservation_type IS NOT NULL
+            AND hold_expires_at IS NOT NULL
+            AND parked_since IS NULL)
+
+        OR
+
+        (status = 'parked'
+            AND current_driver_id IS NOT NULL
+            AND reservation_type IS NOT NULL
+            AND hold_expires_at IS NULL
+            AND parked_since IS NOT NULL)
+    )
+);
+
+
+-- 3. RESERVATION HISTORY
+CREATE TABLE public.reservations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    slot_id UUID NOT NULL
+        REFERENCES public.parking_slots(id) ON DELETE RESTRICT,
+
+    driver_id UUID
+        REFERENCES auth.users(id) ON DELETE SET NULL,
+
+    reservation_type TEXT NOT NULL
+        CHECK (reservation_type IN ('immediate', 'advance')),
+
+    status TEXT NOT NULL DEFAULT 'held'
+        CHECK (status IN ('held', 'parked', 'released', 'expired')),
+
+    reserved_at TIMESTAMPTZ DEFAULT NOW(),
+
+    hold_expires_at TIMESTAMPTZ,
+
+    parked_at TIMESTAMPTZ,
+
+    released_at TIMESTAMPTZ
+);
+
+
+-- 4. PREVENT DUPLICATE ACTIVE RESERVATIONS
+
+-- One active reservation per parking slot
+CREATE UNIQUE INDEX one_active_reservation_per_slot
+ON public.reservations (slot_id)
+WHERE status IN ('held', 'parked');
+
+-- One active reservation per driver
+CREATE UNIQUE INDEX one_active_reservation_per_driver
+ON public.reservations (driver_id)
+WHERE status IN ('held', 'parked')
+AND driver_id IS NOT NULL;
+
+
+-- 5. ENABLE ROW LEVEL SECURITY
+
+ALTER TABLE public.lots
+ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.parking_slots
+ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.reservations
+ENABLE ROW LEVEL SECURITY;
+
+
+-- 6. INSERT THE FIVE PARKING LOCATIONS
+
+INSERT INTO public.lots (name, slug, display_order)
+VALUES
+('Centaurus Mall', 'centaurus-mall', 1),
+('Giga Mall', 'giga-mall', 2),
+('Packages Mall', 'packages-mall', 3),
+('Shifa International Hospital', 'shifa-hospital', 4),
+('Jinnah Super Market', 'jinnah-super-market', 5)
+ON CONFLICT (slug) DO NOTHING;
+
+
+-- 7. GENERATE 50 SLOTS FOR EACH LOCATION
+
+INSERT INTO public.parking_slots (lot_id, slot_code)
+
+SELECT
+    l.id,
+    CHR(65 + r.row_number) || s.slot_number
+
+FROM public.lots l
+
+CROSS JOIN GENERATE_SERIES(0, 4)
+    AS r(row_number)
+
+CROSS JOIN GENERATE_SERIES(1, 10)
+    AS s(slot_number)
+
+ON CONFLICT (lot_id, slot_code) DO NOTHING;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- Check all five parking locations
+SELECT *
+FROM public.lots
+ORDER BY display_order;
+
+-- Count total parking slots
+SELECT COUNT(*) AS total_slots
+FROM public.parking_slots;
+
+-- Count slots in each parking location
+SELECT
+    l.name,
+    COUNT(s.id) AS total_slots
+FROM public.lots l
+LEFT JOIN public.parking_slots s
+    ON l.id = s.lot_id
+GROUP BY l.name, l.display_order
+ORDER BY l.display_order;
+
+-- Check reservation table
+SELECT *
+FROM public.reservations;
