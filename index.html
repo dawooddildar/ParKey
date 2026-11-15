@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ParKey – Live Parking</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#14171c;--mute:#5d6674;--free:#1f9d55;--freebg:#dff5e7;--occ:#d64545;--occbg:#fbe0e0;--mine:#2563eb;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1216;--card:#181c22;--text:#eef1f5;--mute:#9aa4b2;--free:#3ecf7b;--freebg:#14301f;--occ:#f06b6b;--occbg:#3a1c1c;--mine:#6ea0ff}}
+:root[data-theme="dark"]{--bg:#0f1216;--card:#181c22;--text:#eef1f5;--mute:#9aa4b2;--free:#3ecf7b;--freebg:#14301f;--occ:#f06b6b;--occbg:#3a1c1c;--mine:#6ea0ff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--mute);background:var(--card);color:var(--text);font-size:16px}
+.counter{margin:14px 0 6px;padding:14px;border-radius:12px;background:var(--card);text-align:center;font-size:22px;font-weight:700}
+.counter.full{background:var(--occbg);color:var(--occ)}
+.note{text-align:center;color:var(--mute);font-size:14px;min-height:20px;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:5px}
+.s{aspect-ratio:1;border-radius:6px;border:0;font-size:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.s.free{background:var(--freebg);color:var(--free);outline:1.5px solid var(--free)}
+.s.occ{background:var(--occbg);color:var(--occ);cursor:not-allowed}
+.s.mine{background:var(--mine);color:#fff;outline:2px solid var(--mine)}
+.legend{display:flex;gap:14px;justify-content:center;margin:14px 0;font-size:13px;color:var(--mute)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
+button.leave{width:100%;padding:13px;border:0;border-radius:10px;background:var(--mine);color:#fff;font-size:16px;font-weight:600;cursor:pointer}
+button.leave[hidden]{display:none}
+.small{font-size:12px;color:var(--mute);text-align:center;margin-top:12px}
+@media (max-width:400px){.s{font-size:8px}.grid{gap:3px}}
+</style>
+</head>
+<body>
+<main>
+<h1>ParKey · Live Parking</h1>
+<select id="lot"></select>
+<div class="counter" id="count"></div>
+<div class="note" id="note"></div>
+<div class="grid" id="grid"></div>
+<div class="legend"><span><i style="background:var(--free)"></i>Free</span><span><i style="background:var(--occ)"></i>Occupied</span><span><i style="background:var(--mine)"></i>Your slot</span></div>
+<button class="leave" id="leave" hidden>I’ve left the lot</button>
+<div class="small">Demo: other cars arrive and leave on their own so you can watch the counter update.</div>
+</main>
+<script>
+var LOTS=["Centaurus Mall","Giga Mall","Packages Mall","Shifa International Hospital","Jinnah Super Market"];
+var rows="ABCDE",lots={},cur=0,mine=null;
+LOTS.forEach(function(n,i){var a=[];for(var k=0;k<50;k++)a.push(Math.random()<(i==2?1:0.7)?1:0);lots[i]=a});
+function name(k){return rows[Math.floor(k/10)]+(k%10+1)}
+var sel=document.getElementById("lot");
+LOTS.forEach(function(n,i){var o=document.createElement("option");o.value=i;o.textContent=n;sel.appendChild(o)});
+sel.onchange=function(){cur=+sel.value;note("");render()};
+function note(t){document.getElementById("note").textContent=t}
+function render(){
+ var a=lots[cur],free=a.filter(function(x){return !x}).length,g=document.getElementById("grid");
+ g.innerHTML="";
+ a.forEach(function(v,k){
+  var b=document.createElement("button"),isMine=mine&&mine.lot==cur&&mine.k==k;
+  b.className="s "+(isMine?"mine":v?"occ":"free");b.textContent=name(k);
+  b.disabled=!!v&&!isMine;b.onclick=function(){pick(k)};g.appendChild(b)});
+ var c=document.getElementById("count");
+ c.textContent=free?free+"/50 slots remaining":"Lot full – 0/50 slots remaining";
+ c.className="counter"+(free?"":" full");
+ if(!free&&!mine)note("This lot is full. Please try another lot.");
+ document.getElementById("leave").hidden=!mine;
+}
+function pick(k){
+ if(mine){note("You already have slot "+name(mine.k)+" at "+LOTS[mine.lot]+".");return}
+ if(lots[cur][k])return;
+ lots[cur][k]=1;mine={lot:cur,k:k};note("Slot "+name(k)+" is yours. Drive straight to it.");render()}
+document.getElementById("leave").onclick=function(){
+ lots[mine.lot][mine.k]=0;note("Slot "+name(mine.k)+" is green again for other drivers.");mine=null;render()};
+setInterval(function(){
+ var a=lots[cur],k=Math.floor(Math.random()*50);
+ if(mine&&mine.lot==cur&&mine.k==k)return;
+ a[k]=a[k]?0:1;render()},2500);
+render();
+</script>
+</body>
+</html>
