@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ParKey – Live Parking</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#14171c;--mute:#5d6674;--free:#1f9d55;--freebg:#dff5e7;--occ:#d64545;--occbg:#fbe0e0;--mine:#2563eb;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1216;--card:#181c22;--text:#eef1f5;--mute:#9aa4b2;--free:#3ecf7b;--freebg:#14301f;--occ:#f06b6b;--occbg:#3a1c1c;--mine:#6ea0ff}}
+:root[data-theme="dark"]{--bg:#0f1216;--card:#181c22;--text:#eef1f5;--mute:#9aa4b2;--free:#3ecf7b;--freebg:#14301f;--occ:#f06b6b;--occbg:#3a1c1c;--mine:#6ea0ff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--mute);background:var(--card);color:var(--text);font-size:16px}
+.counter{margin:14px 0 6px;padding:14px;border-radius:12px;background:var(--card);text-align:center;font-size:22px;font-weight:700}
+.counter.full{background:var(--occbg);color:var(--occ)}
+.note{text-align:center;color:var(--mute);font-size:14px;min-height:20px;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:5px}
+.s{aspect-ratio:1;border-radius:6px;border:0;font-size:10px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.s.free{background:var(--freebg);color:var(--free);outline:1.5px solid var(--free)}
+.s.occ{background:var(--occbg);color:var(--occ);cursor:not-allowed}
+.s.mine{background:var(--mine);color:#fff;outline:2px solid var(--mine)}
+.legend{display:flex;gap:14px;justify-content:center;margin:14px 0;font-size:13px;color:var(--mute)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
+button.leave{width:100%;padding:13px;border:0;border-radius:10px;background:var(--mine);color:#fff;font-size:16px;font-weight:600;cursor:pointer}
+button.leave[hidden]{display:none}
+button.leave{margin-top:8px}
+.hold{margin-bottom:12px;padding:12px;border-radius:12px;background:var(--card);border:2px solid var(--mine);text-align:center;font-size:15px}
+.hold b{font-size:26px;display:block;color:var(--mine);font-variant-numeric:tabular-nums}
+.hold[hidden]{display:none}
+.small{font-size:12px;color:var(--mute);text-align:center;margin-top:12px}
+@media (max-width:400px){.s{font-size:8px}.grid{gap:3px}}
+.sel{outline:2px dashed var(--mine)}
+.panel{margin-bottom:12px;padding:12px;border-radius:12px;background:var(--card);border:2px solid var(--mine);text-align:center;font-size:15px}
+.panel[hidden]{display:none}
+.panel .row{display:flex;gap:8px;margin-top:10px}
+.panel button{flex:1;padding:12px 6px;border:0;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;background:var(--mine);color:#fff}
+.panel button.ghost{background:transparent;color:var(--mute);border:1px solid var(--mute)}
+.panel.warn{border-color:var(--occ)}
+</style>
+</head>
+<body>
+<main>
+<h1>ParKey · Live Parking</h1>
+<select id="lot"></select>
+<div class="counter" id="count">Loading…</div>
+<div class="note" id="note"></div>
+<div class="panel warn" id="nudge" hidden></div>
+<div class="panel" id="hold" hidden></div>
+<div class="panel" id="choose" hidden></div>
+<div class="grid" id="grid"></div>
+<div class="legend"><span><i style="background:var(--free)"></i>Free</span><span><i style="background:var(--occ)"></i>Occupied</span><span><i style="background:var(--mine)"></i>Your slot</span></div>
+<div class="small" id="foot"></div>
+</main>
+<script>
+var LOTS=["Centaurus Mall","Giga Mall","Packages Mall","Shifa International Hospital","Jinnah Super Market"];
+var FAST=location.hash==="#fast";
+var T=FAST?{now:20,ahead:40,nudge:30,auto:60}:{now:300,ahead:1800,nudge:1800,auto:3600};
+var rows="ABCDE",db=null,uid=null,active=null,cur=0,slots={},mine=null,pending=null,loaded=false,busy=false,nudged=false,unsub=null;
+function $(i){return document.getElementById(i)}
+function nm(k){return rows[Math.floor(k/10)]+(k%10+1)}
+function sp(l,k){return "lots/l"+l+"/slots/s"+k}
+function fmt(s){s=Math.max(0,Math.ceil(s));var m=Math.floor(s/60),r=s%60;return m+":"+(r<10?"0":"")+r}
+function note(t){$("note").textContent=t}
+function eff(d){
+ if(!d||!d.state||d.state==="free")return "free";
+ var n=Date.now();
+ if(d.state==="hold"&&n>=d.holdUntil)return "free";
+ if(d.state==="parked"&&(n-d.since)/1000>=T.auto)return "free";
+ return d.state}
+var sel=$("lot");
+LOTS.forEach(function(n,i){var o=document.createElement("option");o.value=i;o.textContent=n;sel.appendChild(o)});
+sel.onchange=function(){cur=+sel.value;pending=null;note("");sub();render()};
+var g=$("grid");
+for(var k=0;k<50;k++){var b=document.createElement("button");b.className="s free";b.dataset.k=k;b.textContent=nm(k);g.appendChild(b)}
+g.onclick=function(e){var t=e.target.closest("button");if(t)choose(+t.dataset.k)};
+function render(){
+ var btns=g.children,free=0;
+ for(var k=0;k<50;k++){
+  var d=slots["s"+k],st=eff(d),b=btns[k];
+  var isMine=!!(mine&&mine.lot===cur&&mine.k===k);
+  if(st==="free")free++;
+  b.className="s "+(isMine?"mine":st!=="free"?"occ":"free")+(pending===k?" sel":"");
+  b.disabled=!db||(st!=="free"&&!isMine)}
+ var c=$("count");
+ if(!db){c.textContent="Live data unavailable";c.className="counter";$("foot").textContent="Open this page signed in to claude.ai to see live slots."}
+ else if(!loaded){c.textContent="Loading…";c.className="counter"}
+ else{c.textContent=free?free+"/50 slots remaining":"Lot full – 0/50 slots remaining";c.className="counter"+(free?"":" full");
+  if(!free&&!mine)note("This lot is full. Please try another lot.")}
+ renderPanels()}
+function renderPanels(){
+ var h=$("hold"),ch=$("choose"),nu=$("nudge");
+ if(mine&&mine.state==="hold"){
+  var left=(mine.holdUntil-Date.now())/1000;
+  h.hidden=false;
+  h.innerHTML="Slot "+nm(mine.k)+" at "+LOTS[mine.lot]+" is "+(mine.kind==="ahead"?"reserved for you":"held for you")+"<b>"+fmt(left)+"</b>Park before the timer ends or the slot is released.<div class=\"row\"><button id=\"bpark\">I’ve parked here</button></div>";
+  $("bpark").onclick=parked}
+ else if(mine){
+  h.hidden=false;
+  h.innerHTML="You are parked in slot "+nm(mine.k)+" at "+LOTS[mine.lot]+". Tap below when you drive away.<div class=\"row\"><button id=\"bleave\">I’ve left the lot</button></div>";
+  $("bleave").onclick=function(){release("Slot "+nm(mine.k)+" is green again for other drivers.")}}
+ else h.hidden=true;
+ if(mine&&mine.state==="parked"&&nudged){
+  nu.hidden=false;
+  nu.innerHTML="Still parked in "+nm(mine.k)+"? If you have left, please say so. Otherwise the slot is freed automatically at "+(FAST?"1 minute":"1 hour")+".<div class=\"row\"><button id=\"nleft\">I’ve left</button><button class=\"ghost\" id=\"nhere\">I’m still here</button></div>";
+  $("nleft").onclick=function(){release("Slot "+nm(mine.k)+" is green again for other drivers.")};
+  $("nhere").onclick=stillHere}
+ else nu.hidden=true;
+ if(pending!==null&&!mine){
+  ch.hidden=false;
+  ch.innerHTML="Slot "+nm(pending)+" selected<div class=\"row\"><button id=\"cnow\">I’m here (hold "+T.now/60*(FAST?1:1)+" min)</button><button id=\"cahead\">Reserve ahead ("+T.ahead/60+" min)</button></div><div class=\"row\"><button class=\"ghost\" id=\"ccancel\">Choose another</button></div>";
+  if(FAST){$("cnow").textContent="I’m here (hold "+T.now+" sec)";$("cahead").textContent="Reserve ahead ("+T.ahead+" sec)"}
+  $("cnow").onclick=function(){claim("now")};
+  $("cahead").onclick=function(){claim("ahead")};
+  $("ccancel").onclick=function(){pending=null;render()}}
+ else ch.hidden=true}
+function choose(k){
+ if(!db||busy)return;
+ if(mine){note(mine.state==="hold"?"You already hold slot "+nm(mine.k)+". Park there, or wait for the timer to end before choosing another.":"You are already parked. Leave first to choose another slot.");return}
+ if(eff(slots["s"+k])!=="free")return;
+ pending=k;note("");render()}
+async function claim(kind){
+ var k=pending;if(k===null||mine||busy)return;busy=true;
+ try{if(window.Notification&&Notification.permission==="default")Notification.requestPermission()}catch(e){}
+ try{
+  var ref=db.doc(sp(cur,k)),a=await ref.acquire({holder:uid,ttlMs:5000});
+  if(!a.acquired){note("Someone just took that slot. Please pick another.");return}
+  var s=await ref.get();
+  if(eff(s.exists?s.data():null)!=="free"){note("Sorry, that slot was just taken. Please pick another.");return}
+  var n=Date.now(),secs=kind==="ahead"?T.ahead:T.now;
+  await ref.set({state:"hold",owner:uid,kind:kind,holdUntil:n+secs*1000,since:n});
+  mine={lot:cur,k:k,state:"hold",kind:kind,holdUntil:n+secs*1000,since:n};
+  await active.set(mine);nudged=false;
+  note("Slot "+nm(k)+" is "+(kind==="ahead"?"reserved":"held")+" for you.");
+ }catch(e){note("Could not reserve right now. Please try again.")}
+ finally{busy=false;pending=null;render()}}
+async function parked(){
+ if(!mine||busy)return;busy=true;
+ try{
+  var ref=db.doc(sp(mine.lot,mine.k)),s=await ref.get(),d=s.exists?s.data():null;
+  if(!d||d.owner!==uid||eff(d)==="free"){await dropMine();note("Your hold expired. Please choose a slot again.");return}
+  var n=Date.now();await ref.update({state:"parked",since:n});
+  mine=Object.assign({},mine,{state:"parked",since:n});await active.set(mine);nudged=false;
+  note("Slot "+nm(mine.k)+" is now marked as occupied.");
+ }catch(e){note("Could not update. Please try again.")}
+ finally{busy=false;render()}}
+async function stillHere(){
+ if(!mine||busy)return;busy=true;
+ try{var n=Date.now();await db.doc(sp(mine.lot,mine.k)).update({since:n});mine=Object.assign({},mine,{since:n});await active.set(mine);nudged=false;note("Thanks. We’ll check again later.")}
+ catch(e){note("Could not update. Please try again.")}
+ finally{busy=false;render()}}
+async function dropMine(){mine=null;nudged=false;try{await active.delete()}catch(e){}}
+async function release(msg){
+ if(!mine||busy)return;busy=true;var m=mine;
+ try{
+  var ref=db.doc(sp(m.lot,m.k)),s=await ref.get();
+  if(s.exists&&s.data().owner===uid)await ref.set({state:"free",owner:""});
+  await dropMine();note(msg);
+ }catch(e){note("Could not update. Please try again.")}
+ finally{busy=false;render()}}
+function sub(){
+ if(unsub)unsub();slots={};loaded=false;
+ if(!db)return;
+ unsub=db.collection("lots/l"+cur+"/slots").onSnapshot(function(sn){
+  slots={};sn.docs.forEach(function(d){slots[d.id]=d.data()});loaded=true;render()},
+  function(){note("Live connection lost. Please reopen the page.")})}
+function tick(){
+ var n=Date.now();
+ if(mine&&!busy){
+  if(mine.state==="hold"&&n>=mine.holdUntil)release("Time’s up. Slot "+nm(mine.k)+" was released. You can choose a slot again.");
+  else if(mine.state==="parked"){
+   var age=(n-mine.since)/1000;
+   if(age>=T.auto)release("Slot "+nm(mine.k)+" was freed automatically because it wasn’t updated in time.");
+   else if(age>=T.nudge&&!nudged){nudged=true;
+    try{if(window.Notification&&Notification.permission==="granted")new Notification("ParKey",{body:"Still parked in "+nm(mine.k)+"? Tell us if you have left."})}catch(e){}}}}
+ render()}
+async function init(){
+ if(FAST)$("foot").textContent="Test mode: timers are shortened.";
+ try{
+  var u=await claude.use("user"),d=await claude.use("db");
+  if(!u||!d){render();return}
+  db=d;uid=await u.id();
+  active=db.collection("data/users/"+uid).doc("active");
+  active.onSnapshot(function(s){var v=s.exists?s.data():null;if(!busy){mine=v;if(!v)nudged=false}render()});
+  sub();
+ }catch(e){db=null}
+ render();setInterval(tick,1000)}
+init();
+</script>
+</body>
+</html>
