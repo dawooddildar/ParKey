@@ -194,3 +194,62 @@ ORDER BY l.display_order;
 -- Check reservation table
 SELECT *
 FROM public.reservations;
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- =========================================
+-- PARKEY SECURITY POLICIES
+-- =========================================
+
+-- Remove existing policies if rerunning
+DROP POLICY IF EXISTS "Anyone can view lots"
+ON public.lots;
+
+DROP POLICY IF EXISTS "Anyone can view parking slots"
+ON public.parking_slots;
+
+DROP POLICY IF EXISTS "Drivers can view own reservations"
+ON public.reservations;
+
+
+-- 1. Everyone can view parking locations
+CREATE POLICY "Anyone can view lots"
+ON public.lots
+FOR SELECT
+TO anon, authenticated
+USING (true);
+
+
+-- 2. Everyone can view parking availability
+CREATE POLICY "Anyone can view parking slots"
+ON public.parking_slots
+FOR SELECT
+TO anon, authenticated
+USING (true);
+
+
+-- 3. Drivers can only view their own reservations
+CREATE POLICY "Drivers can view own reservations"
+ON public.reservations
+FOR SELECT
+TO authenticated
+USING (driver_id = (SELECT auth.uid()));
+
+
+-- 4. Grant read permissions
+GRANT SELECT ON public.lots TO anon, authenticated;
+
+GRANT SELECT ON public.parking_slots TO anon, authenticated;
+
+GRANT SELECT ON public.reservations TO authenticated;
+
